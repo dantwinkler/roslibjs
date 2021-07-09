@@ -9,7 +9,8 @@
 'use strict';
 
 var decompressPng = require('../util/decompressPng');
-var WebSocket = require('ws');
+var CBOR = require('cbor-js');
+var typedArrayTagger = require('../util/cborTypedArrayTags');
 var BSON = null;
 if(typeof bson !== 'undefined'){
     BSON = bson().BSON;
@@ -19,11 +20,17 @@ if(typeof bson !== 'undefined'){
  * Events listeners for a WebSocket or TCP socket to a JavaScript
  * ROS Client. Sets up Messages for a given topic to trigger an
  * event on the ROS client.
- * 
+ *
  * @namespace SocketAdapter
  * @private
  */
 function SocketAdapter(client) {
+
+  var decoder = null;
+  if (client.transportOptions.decoder) {
+    decoder = client.transportOptions.decoder;
+  }
+
   function handleMessage(message) {
     if (message.op === 'publish') {
       client.emit(message.topic, message.msg);
@@ -31,6 +38,12 @@ function SocketAdapter(client) {
       client.emit(message.id, message);
     } else if (message.op === 'call_service') {
       client.emit(message.service, message);
+    } else if(message.op === 'status'){
+      if(message.id){
+        client.emit('status:'+message.id, message);
+      } else {
+        client.emit('status', message);
+      }
     }
   }
 
@@ -96,10 +109,17 @@ function SocketAdapter(client) {
      * @memberof SocketAdapter
      */
     onmessage: function onMessage(data) {
-      if (typeof Blob !== 'undefined' && data.data instanceof Blob) {
+      if (decoder) {
+        decoder(data.data, function (message) {
+          handleMessage(message);
+        });
+      } else if (typeof Blob !== 'undefined' && data.data instanceof Blob) {
         decodeBSON(data.data, function (message) {
           handlePng(message, handleMessage);
         });
+      } else if (data.data instanceof ArrayBuffer) {
+        var decoded = CBOR.decode(data.data, typedArrayTagger);
+        handleMessage(decoded);
       } else {
         var message = JSON.parse(typeof data === 'string' ? data : data.data);
         handlePng(message, handleMessage);

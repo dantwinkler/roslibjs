@@ -8,6 +8,7 @@ var Goal = require('../actionlib/Goal');
 
 var Service = require('../core/Service.js');
 var ServiceRequest = require('../core/ServiceRequest.js');
+var Topic = require('../core/Topic.js');
 
 var Transform = require('../math/Transform');
 
@@ -50,9 +51,11 @@ function TFClient(options) {
   this.currentTopic = false;
   this.frameInfos = {};
   this.republisherUpdateRequested = false;
+  this._subscribeCB = null;
 
   // Create an Action client
-  this.actionClient = this.ros.ActionClient({
+  this.actionClient = new ActionClient({
+    ros : options.ros,
     serverName : this.serverName,
     actionName : 'tf2_web_republisher/TFSubscriptionAction',
     omitStatus : true,
@@ -60,7 +63,8 @@ function TFClient(options) {
   });
 
   // Create a Service client
-  this.serviceClient = this.ros.Service({
+  this.serviceClient = new Service({
+    ros: options.ros,
     name: this.repubServiceName,
     serviceType: 'tf2_web_republisher/RepublishTFs'
   });
@@ -143,14 +147,16 @@ TFClient.prototype.processResponse = function(response) {
   // if we subscribed to a topic before, unsubscribe so
   // the republisher stops publishing it
   if (this.currentTopic) {
-    this.currentTopic.unsubscribe();
+    this.currentTopic.unsubscribe(this._subscribeCB);
   }
 
-  this.currentTopic = this.ros.Topic({
+  this.currentTopic = new Topic({
+    ros: this.ros,
     name: response.topic_name,
     messageType: 'tf2_web_republisher/TFArray'
   });
-  this.currentTopic.subscribe(this.processTFArray.bind(this));
+  this._subscribeCB = this.processTFArray.bind(this);
+  this.currentTopic.subscribe(this._subscribeCB);
 };
 
 /**
@@ -203,6 +209,16 @@ TFClient.prototype.unsubscribe = function(frameID, callback) {
   }
   if (!callback || cbs.length === 0) {
     delete this.frameInfos[frameID];
+  }
+};
+
+/**
+ * Unsubscribe and unadvertise all topics associated with this TFClient.
+ */
+TFClient.prototype.dispose = function() {
+  this.actionClient.dispose();
+  if (this.currentTopic) {
+    this.currentTopic.unsubscribe(this._subscribeCB);
   }
 };
 
